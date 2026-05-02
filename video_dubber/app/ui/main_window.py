@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -35,7 +34,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("英文视频转中文配音工具")
-        self.resize(1040, 820)
+        self.resize(1280, 900)
+        self.setMinimumSize(980, 760)
         self.video_path: str = ""
         self.result_paths: dict[str, str] = {}
         self.thread: QThread | None = None
@@ -83,68 +83,117 @@ class MainWindow(QMainWindow):
 
     def _build_settings_group(self) -> QGroupBox:
         group = QGroupBox("参数设置")
-        layout = QGridLayout(group)
+        layout = QVBoxLayout(group)
+        layout.setSpacing(12)
 
         self.whisper_model_combo = QComboBox()
         self.whisper_model_combo.addItems(["tiny", "base", "small", "medium", "large-v3"])
         self.whisper_model_combo.setCurrentText("small")
+        self.whisper_model_combo.setMinimumWidth(180)
         self.whisper_model_path_edit = QLineEdit()
-        self.whisper_model_path_edit.setPlaceholderText("可选：选择本地 faster-whisper 模型文件夹")
+        self.whisper_model_path_edit.setPlaceholderText("可选：选择本地 faster-whisper 模型文件夹，或 OpenAI Whisper .pt 模型文件")
+        self.whisper_model_path_edit.setMinimumWidth(620)
         self.choose_whisper_model_path_button = QPushButton("选择本地模型")
 
         self.source_language_combo = QComboBox()
         self.source_language_combo.addItems(["English"])
+        self.source_language_combo.setMinimumWidth(180)
         self.target_language_combo = QComboBox()
         self.target_language_combo.addItems(["Chinese Simplified"])
+        self.target_language_combo.setMinimumWidth(220)
 
         self.translation_service_combo = QComboBox()
         self.translation_service_combo.addItems(["DeepSeek", "OpenAI"])
         self.translation_service_combo.setCurrentText("DeepSeek")
+        self.translation_service_combo.setMinimumWidth(180)
 
         self.translation_model_edit = QLineEdit("deepseek-v4-flash")
+        self.translation_model_edit.setMinimumWidth(260)
         self.tts_service_combo = QComboBox()
         self.tts_service_combo.addItems(["Edge TTS", "OpenAI TTS", "ElevenLabs"])
         self.tts_service_combo.setCurrentText("Edge TTS")
+        self.tts_service_combo.setMinimumWidth(180)
 
         self.tts_voice_edit = QLineEdit("zh-CN-XiaoxiaoNeural")
+        self.tts_voice_edit.setMinimumWidth(360)
         self.keep_background_checkbox = QCheckBox("保留原视频背景音")
         self.bilingual_checkbox = QCheckBox("生成双语字幕")
         self.bilingual_checkbox.setChecked(True)
 
         self.output_dir_edit = QLineEdit(str(DEFAULT_OUTPUT_DIR))
+        self.output_dir_edit.setMinimumWidth(620)
         self.choose_output_button = QPushButton("选择输出目录")
 
-        form_left = QFormLayout()
-        form_left.addRow("Whisper 模型", self.whisper_model_combo)
+        whisper_form = self._make_form()
+        whisper_form.addRow("Whisper 模型", self.whisper_model_combo)
         model_path_row = QHBoxLayout()
+        model_path_row.setSpacing(8)
         model_path_row.addWidget(self.whisper_model_path_edit, stretch=1)
         self.choose_whisper_model_file_button = QPushButton("选择模型文件")
         self.choose_whisper_model_path_button.setText("选择模型文件夹")
+        self.choose_whisper_model_file_button.setFixedWidth(120)
+        self.choose_whisper_model_path_button.setFixedWidth(132)
         model_path_row.addWidget(self.choose_whisper_model_file_button)
         model_path_row.addWidget(self.choose_whisper_model_path_button)
-        form_left.addRow("本地模型路径", model_path_row)
-        form_left.addRow("源语言", self.source_language_combo)
-        form_left.addRow("目标语言", self.target_language_combo)
-        form_left.addRow("翻译服务", self.translation_service_combo)
-        form_left.addRow("翻译模型", self.translation_model_edit)
+        whisper_form.addRow("本地模型路径", model_path_row)
 
-        form_right = QFormLayout()
-        form_right.addRow("TTS 服务", self.tts_service_combo)
-        form_right.addRow("中文声音", self.tts_voice_edit)
-        form_right.addRow("", self.keep_background_checkbox)
-        form_right.addRow("", self.bilingual_checkbox)
+        translation_form = self._make_form()
+        language_row = QHBoxLayout()
+        language_row.setSpacing(16)
+        language_row.addWidget(QLabel("源语言"))
+        language_row.addWidget(self.source_language_combo)
+        language_row.addSpacing(20)
+        language_row.addWidget(QLabel("目标语言"))
+        language_row.addWidget(self.target_language_combo)
+        language_row.addStretch(1)
+        translation_form.addRow("语言", language_row)
+        translation_row = QHBoxLayout()
+        translation_row.setSpacing(16)
+        translation_row.addWidget(QLabel("服务"))
+        translation_row.addWidget(self.translation_service_combo)
+        translation_row.addSpacing(20)
+        translation_row.addWidget(QLabel("模型"))
+        translation_row.addWidget(self.translation_model_edit, stretch=1)
+        translation_form.addRow("翻译", translation_row)
+
+        tts_form = self._make_form()
+        tts_row = QHBoxLayout()
+        tts_row.setSpacing(16)
+        tts_row.addWidget(QLabel("服务"))
+        tts_row.addWidget(self.tts_service_combo)
+        tts_row.addSpacing(20)
+        tts_row.addWidget(QLabel("中文声音"))
+        tts_row.addWidget(self.tts_voice_edit, stretch=1)
+        tts_form.addRow("TTS", tts_row)
+        options_row = QHBoxLayout()
+        options_row.setSpacing(24)
+        options_row.addWidget(self.keep_background_checkbox)
+        options_row.addWidget(self.bilingual_checkbox)
+        options_row.addStretch(1)
+        tts_form.addRow("选项", options_row)
 
         output_row = QHBoxLayout()
+        output_row.setSpacing(8)
         output_row.addWidget(self.output_dir_edit, stretch=1)
+        self.choose_output_button.setFixedWidth(132)
         output_row.addWidget(self.choose_output_button)
+        output_form = self._make_form()
+        output_form.addRow("输出目录", output_row)
 
-        layout.addLayout(form_left, 0, 0)
-        layout.addLayout(form_right, 0, 1)
-        layout.addWidget(QLabel("输出目录"), 1, 0)
-        layout.addLayout(output_row, 1, 1)
-        layout.setColumnStretch(0, 1)
-        layout.setColumnStretch(1, 1)
+        layout.addLayout(whisper_form)
+        layout.addLayout(translation_form)
+        layout.addLayout(tts_form)
+        layout.addLayout(output_form)
         return group
+
+    def _make_form(self) -> QFormLayout:
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
+        return form
 
     def _build_execution_group(self) -> QGroupBox:
         group = QGroupBox("执行")
