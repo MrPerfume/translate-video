@@ -32,6 +32,7 @@ class ProcessingOptions:
     tts_voice: str = "zh-CN-XiaoxiaoNeural"
     keep_background_audio: bool = False
     generate_bilingual_subtitles: bool = True
+    cleanup_intermediate_files: bool = False
 
 
 @dataclass(frozen=True)
@@ -181,14 +182,21 @@ class VideoDubberWorker(QObject):
             "步骤 3/7：识别英文字幕",
             18,
             45,
-            "Whisper 正在加载模型并识别字幕；长视频这一环节可能耗时较久，当前环节无精确百分比",
-            indeterminate=True,
+            "Whisper 正在加载模型并识别字幕；长视频这一环节可能耗时较久",
+            indeterminate=False,
         )
         segments = WhisperTranscriber(
             model_name=options.whisper_model,
             language="en",
             model_path=options.whisper_model_path.strip() or None,
-        ).transcribe(extracted_wav, should_cancel=lambda: self._cancel_requested)
+        ).transcribe(
+            extracted_wav,
+            should_cancel=lambda: self._cancel_requested,
+            on_progress=lambda done, total: self._update_step_progress(
+                min(99, round(done * 100 / total)) if total else 0,
+                f"识别进度：{done}/{total}",
+            ),
+        )
         self.logger.info(f"识别完成：共 {len(segments)} 段字幕")
         self._finish_step(f"识别完成：共 {len(segments)} 段字幕")
 
@@ -248,6 +256,15 @@ class VideoDubberWorker(QObject):
         self.logger.info(f"中文配音视频：{dubbed_video}")
         self._finish_step(f"中文配音视频已生成：{dubbed_video.name}")
 
+        # 清理中间文件（可选）
+        if options.cleanup_intermediate_files:
+            for intermediate in (extracted_wav, voice_wav):
+                try:
+                    intermediate.unlink(missing_ok=True)
+                    self.logger.info(f"已删除中间文件：{intermediate.name}")
+                except OSError as exc:
+                    self.logger.warning(f"删除中间文件失败：{intermediate.name}，{exc}")
+
         self.progress_changed.emit(100)
         self.step_progress_changed.emit(100)
         self.step_detail_changed.emit("全部处理完成")
@@ -261,7 +278,7 @@ class VideoDubberWorker(QObject):
             english_srt=str(english_srt),
             chinese_srt=str(chinese_srt),
             bilingual_txt=str(bilingual_txt),
-            chinese_voice_wav=str(voice_wav),
+            chinese_voice_wav=str(voice_wav) if not options.cleanup_intermediate_files else "",
             log_file=str(log_file),
             bilingual_srt=str(bilingual_srt) if bilingual_srt else None,
         )

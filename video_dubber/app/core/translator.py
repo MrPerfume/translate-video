@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -9,6 +10,10 @@ import httpx
 
 from app.config.settings import load_settings
 from app.core.transcriber import SubtitleSegment
+
+# 翻译 API 重试配置：最多重试 3 次，指数退避基础间隔 2 秒
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 2.0
 
 
 TRANSLATION_SYSTEM_PROMPT = """你是专业影视字幕翻译。请把英文字幕翻译成自然、口语化、适合中文观众观看的简体中文。要求：
@@ -155,18 +160,40 @@ class SubtitleTranslator:
             "max_tokens": self._estimate_max_tokens(user_prompt),
         }
 
-        with httpx.Client(timeout=120.0) as client:
-            response = client.post(url, headers=headers, json=body)
+        last_exc: Exception | None = None
+        for attempt in range(1, _MAX_RETRIES + 1):
             try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                detail = response.text[:500] if response.text else str(exc)
-                raise RuntimeError(f"翻译 API 请求失败：HTTP {response.status_code}，{detail}") from exc
-            data = response.json()
-        try:
-            return data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError("翻译 API 返回格式异常") from exc
+                with httpx.Client(timeout=120.0) as client:
+                    response = client.post(url, headers=headers, json=body)
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        detail = response.text[:500] if response.text else str(exc)
+                        # 4xx 客户端错误（除 429 限速）不重试
+                        if response.status_code != 429 and 400 <= response.status_code < 500:
+                            raise RuntimeError(
+                                f"翻译 API 请求失败：HTTP {response.status_code}，{detail}"
+                            ) from exc
+                        raise RuntimeError(
+                            f"翻译 API 请求失败（第 {attempt} 次）：HTTP {response.status_code}，{detail}"
+                        ) from exc
+                    data = response.json()
+                try:
+                    return data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise RuntimeError("翻译 API 返回格式异常") from exc
+            except (httpx.TransportError, httpx.TimeoutException, RuntimeError) as exc:
+                last_exc = exc
+                # 格式异常或不可重试的 4xx 直接抛出
+                if isinstance(exc, RuntimeError) and "格式异常" in str(exc):
+                    raise
+                if isinstance(exc, RuntimeError) and "HTTP 4" in str(exc) and "429" not in str(exc):
+                    raise
+                if attempt < _MAX_RETRIES:
+                    delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    time.sleep(delay)
+
+        raise RuntimeError(f"翻译 API 在 {_MAX_RETRIES} 次重试后仍失败：{last_exc}")
 
     @staticmethod
     def _parse_json_array(content: str) -> list:

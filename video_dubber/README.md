@@ -6,11 +6,13 @@
 
 - 选择或拖拽 `mp4`、`mov`、`mkv`、`avi` 视频
 - FFmpeg 提取 16kHz mono WAV
-- faster-whisper 英文语音识别
-- DeepSeek 或 OpenAI Chat Completions 翻译字幕
-- Edge TTS 生成中文配音 WAV
+- faster-whisper 英文语音识别，实时进度条
+- DeepSeek 或 OpenAI Chat Completions 翻译字幕，网络抖动自动重试（最多 3 次指数退避）
+- Edge TTS 生成中文配音 WAV，自动语速调整（TTS 超出字幕时长时用 ffmpeg atempo 压缩，最大 1.25x）
+- TTS 声音试听按钮，合成示例文本即时预览
 - FFmpeg 合成中文配音 MP4
 - 输出英文 SRT、中文 SRT、双语 TXT、处理日志
+- 可选：完成后自动删除中间文件（_source_16k.wav、_zh_voice.wav）
 - GUI 使用 QThread 执行耗时任务，处理时窗口不会冻结
 
 ## 创建虚拟环境
@@ -157,4 +159,4 @@ pyinstaller --name "英文视频转中文配音工具" --windowed --onefile run.
 - OpenAI TTS / ElevenLabs 目前只预留接口，选择后会给出明确错误。
 - “保留背景音”是简单低音量混音，不做人声分离，可能保留英文人声。
 - 不包含口型同步、字幕烧录、批量处理。
-- TTS 超出原字幕时长时会保留完整语音并写入日志，暂不做自动变速。
+- TTS 语速自动调整上限为 1.25x；超出上限时保留完整语音并写入日志。

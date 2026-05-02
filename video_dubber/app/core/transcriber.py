@@ -20,27 +20,31 @@ class WhisperTranscriber:
         self.model_name = model_name
         self.language = language
         self.model_path = model_path
+        # 仅在 _transcribe_direct 路径中使用，用于向调用方上报进度
+        self._on_progress_direct: Callable[[int, int], None] | None = None
 
     def transcribe(
         self,
         audio_path: Path,
         should_cancel: Callable[[], bool] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> list[SubtitleSegment]:
-        if should_cancel is None:
+        if should_cancel is None and on_progress is None:
             return self._transcribe_direct(audio_path)
-        return self._transcribe_in_subprocess(audio_path, should_cancel)
+        return self._transcribe_in_subprocess(audio_path, should_cancel, on_progress)
 
-    def _transcribe_direct(self, audio_path: Path) -> list[SubtitleSegment]:
+    def _transcribe_direct(self, audio_path: Path, on_progress: Callable[[int, int], None] | None = None) -> list[SubtitleSegment]:
+        self._on_progress_direct = on_progress
         model_ref = self._resolve_model_ref()
         if self._is_openai_whisper_checkpoint(model_ref):
             return self._transcribe_openai_whisper(audio_path, model_ref)
-
         return self._transcribe_faster_whisper(audio_path, model_ref)
 
     def _transcribe_in_subprocess(
         self,
         audio_path: Path,
-        should_cancel: Callable[[], bool],
+        should_cancel: Callable[[], bool] | None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> list[SubtitleSegment]:
         ctx = mp.get_context("spawn")
         result_queue = ctx.Queue(maxsize=1)
@@ -52,7 +56,7 @@ class WhisperTranscriber:
         process.start()
 
         while True:
-            if should_cancel():
+            if should_cancel and should_cancel():
                 process.terminate()
                 process.join(timeout=5)
                 if process.is_alive():
@@ -70,7 +74,10 @@ class WhisperTranscriber:
 
             process.join(timeout=2)
             if status == "ok":
-                return [SubtitleSegment(**item) for item in payload]
+                segments = [SubtitleSegment(**item) for item in payload]
+                if on_progress:
+                    on_progress(len(segments), len(segments))
+                return segments
             raise RuntimeError(str(payload))
 
     def _transcribe_faster_whisper(self, audio_path: Path, model_ref: str) -> list[SubtitleSegment]:
@@ -80,18 +87,23 @@ class WhisperTranscriber:
             raise RuntimeError("缺少 faster-whisper，请先安装 requirements.txt 中的依赖") from exc
 
         model = WhisperModel(model_ref, device="auto", compute_type="auto")
-        segments_iter, _info = model.transcribe(
+        segments_iter, info = model.transcribe(
             str(audio_path),
             language=self.language,
             vad_filter=True,
             beam_size=5,
         )
         segments: list[SubtitleSegment] = []
+        total_duration = info.duration if info.duration else 0.0
         for segment in segments_iter:
             text = segment.text.strip()
             if not text:
                 continue
             segments.append(SubtitleSegment(start=float(segment.start), end=float(segment.end), original_text=text))
+            # 通过 on_progress 上报已处理时长占比（仅 direct 路径可用）
+            if self._on_progress_direct and total_duration > 0:
+                elapsed_pct = min(99, int(segment.end / total_duration * 100))
+                self._on_progress_direct(elapsed_pct, 100)
         if not segments:
             raise RuntimeError("Whisper 未识别到有效英文字幕")
         return segments

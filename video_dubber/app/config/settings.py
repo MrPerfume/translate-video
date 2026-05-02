@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,8 +21,12 @@ class AppSettings:
     deepseek_base_url: str
 
 
+@lru_cache(maxsize=1)
 def load_settings() -> AppSettings:
-    """Load API settings from .env without exposing secrets to logs."""
+    """Load API settings from .env without exposing secrets to logs.
+    Result is cached for the lifetime of the process; call reload_settings()
+    if the .env file changes at runtime.
+    """
     load_dotenv(PROJECT_ROOT / ".env")
     load_dotenv()
     return AppSettings(
@@ -31,4 +36,10 @@ def load_settings() -> AppSettings:
         openai_base_url=(os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/"),
         deepseek_base_url=(os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/"),
     )
+
+
+def reload_settings() -> AppSettings:
+    """Clear the settings cache and reload from .env."""
+    load_settings.cache_clear()
+    return load_settings()
 

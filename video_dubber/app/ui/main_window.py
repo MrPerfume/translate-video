@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(12, 14, 12, 12)
 
         self.whisper_model_combo = QComboBox()
-        self.whisper_model_combo.addItems(["tiny", "base", "small", "medium", "large-v3"])
+        self.whisper_model_combo.addItems(["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"])
         self.whisper_model_combo.setCurrentText("small")
         self.whisper_model_combo.setFixedWidth(130)
         self._normalize_combo(self.whisper_model_combo)
@@ -133,9 +133,15 @@ class MainWindow(QMainWindow):
         self.tts_voice_edit = QLineEdit("zh-CN-XiaoxiaoNeural")
         self.tts_voice_edit.setFixedWidth(240)
         self._normalize_line_edit(self.tts_voice_edit)
+        self.tts_preview_button = QPushButton("试听")
+        self._normalize_button(self.tts_preview_button)
+        self.tts_preview_button.setFixedWidth(52)
+        self.tts_preview_button.setToolTip("用当前声音合成一句示例文本并播放")
         self.keep_background_checkbox = QCheckBox("保留原视频背景音")
         self.bilingual_checkbox = QCheckBox("生成双语字幕")
         self.bilingual_checkbox.setChecked(True)
+        self.cleanup_checkbox = QCheckBox("完成后删除中间文件")
+        self.cleanup_checkbox.setToolTip("删除 _source_16k.wav 和 _zh_voice.wav，节省磁盘空间")
 
         self.output_dir_edit = QLineEdit(str(DEFAULT_OUTPUT_DIR))
         self._normalize_line_edit(self.output_dir_edit)
@@ -168,11 +174,13 @@ class MainWindow(QMainWindow):
         short_grid.addWidget(self._field_label("TTS 服务"), 2, 0)
         short_grid.addWidget(self.tts_service_combo, 2, 1)
         short_grid.addWidget(self._field_label("中文声音"), 2, 2)
-        short_grid.addWidget(self.tts_voice_edit, 2, 3, 1, 2)
+        short_grid.addWidget(self.tts_voice_edit, 2, 3)
+        short_grid.addWidget(self.tts_preview_button, 2, 4)
         short_grid.addWidget(self._field_label("选项"), 2, 5)
         short_grid.addWidget(self.keep_background_checkbox, 2, 6)
         short_grid.addWidget(self.bilingual_checkbox, 2, 7)
-        short_grid.setColumnStretch(8, 1)
+        short_grid.addWidget(self.cleanup_checkbox, 2, 8)
+        short_grid.setColumnStretch(9, 1)
 
         model_path_row = QHBoxLayout()
         model_path_row.setSpacing(8)
@@ -305,6 +313,7 @@ class MainWindow(QMainWindow):
         self.choose_whisper_model_path_button.clicked.connect(self.choose_whisper_model_path)
         self.choose_output_button.clicked.connect(self.choose_output_dir)
         self.translation_service_combo.currentTextChanged.connect(self._sync_default_model)
+        self.tts_preview_button.clicked.connect(self.preview_tts_voice)
         self.start_button.clicked.connect(self.start_processing)
         self.cancel_button.clicked.connect(self.cancel_processing)
         self.copy_log_button.clicked.connect(self.copy_log)
@@ -329,6 +338,10 @@ class MainWindow(QMainWindow):
         self.video_path = path
         self.video_path_edit.setText(path)
         self.drop_label.setText(Path(path).name)
+        # 选择新视频时重置结果区，避免误操作打开上一次的文件
+        if self.result_paths:
+            self.result_paths = {}
+            self._set_result_buttons_enabled(False)
 
     def choose_output_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择输出目录", self.output_dir_edit.text())
@@ -352,6 +365,42 @@ class MainWindow(QMainWindow):
             self.translation_model_edit.setText("deepseek-v4-flash")
         elif service == "OpenAI":
             self.translation_model_edit.setText("gpt-4o-mini")
+
+    def preview_tts_voice(self) -> None:
+        """合成一句示例文本并用系统默认播放器播放，用于试听声音效果。"""
+        import asyncio
+        import tempfile
+        from pathlib import Path as _Path
+
+        voice = self.tts_voice_edit.text().strip() or "zh-CN-XiaoxiaoNeural"
+        sample_text = "你好，这是一段中文配音试听示例。"
+
+        try:
+            import edge_tts
+        except ImportError:
+            QMessageBox.warning(self, "缺少依赖", "请先安装 edge-tts：pip install edge-tts")
+            return
+
+        self.tts_preview_button.setEnabled(False)
+        self.tts_preview_button.setText("…")
+        QApplication.processEvents()
+
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+            tmp_path = _Path(tmp.name)
+            tmp.close()
+
+            async def _synthesize():
+                communicate = edge_tts.Communicate(text=sample_text, voice=voice)
+                await communicate.save(str(tmp_path))
+
+            asyncio.run(_synthesize())
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(tmp_path)))
+        except Exception as exc:
+            QMessageBox.warning(self, "试听失败", f"无法生成试听音频：{exc}")
+        finally:
+            self.tts_preview_button.setEnabled(True)
+            self.tts_preview_button.setText("试听")
 
     def start_processing(self) -> None:
         if self.thread is not None:
@@ -382,6 +431,7 @@ class MainWindow(QMainWindow):
             tts_voice=self.tts_voice_edit.text().strip() or "zh-CN-XiaoxiaoNeural",
             keep_background_audio=self.keep_background_checkbox.isChecked(),
             generate_bilingual_subtitles=self.bilingual_checkbox.isChecked(),
+            cleanup_intermediate_files=self.cleanup_checkbox.isChecked(),
         )
 
         self.thread = QThread(self)
