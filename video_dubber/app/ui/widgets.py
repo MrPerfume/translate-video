@@ -9,9 +9,9 @@ from app.utils.file_utils import SUPPORTED_VIDEO_EXTENSIONS
 
 
 class DropVideoLabel(QLabel):
-    video_dropped = Signal(str)
+    video_dropped = Signal(str)  # 每个有效视频文件触发一次
 
-    def __init__(self, text: str = "拖拽视频文件到这里") -> None:
+    def __init__(self, text: str = "拖拽视频文件或文件夹到此处批量添加") -> None:
         super().__init__(text)
         self.setAcceptDrops(True)
         self.setAlignment(Qt.AlignCenter)
@@ -31,17 +31,26 @@ class DropVideoLabel(QLabel):
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
-                if Path(url.toLocalFile()).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+                p = Path(url.toLocalFile())
+                if p.is_dir() or p.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
                     event.acceptProposedAction()
                     return
         event.ignore()
 
     def dropEvent(self, event) -> None:
+        accepted = False
         for url in event.mimeData().urls():
-            path = Path(url.toLocalFile())
-            if path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
-                self.video_dropped.emit(str(path))
-                event.acceptProposedAction()
-                return
-        event.ignore()
+            p = Path(url.toLocalFile())
+            if p.is_dir():
+                for child in sorted(p.iterdir()):
+                    if child.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+                        self.video_dropped.emit(str(child))
+                        accepted = True
+            elif p.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+                self.video_dropped.emit(str(p))
+                accepted = True
+        if accepted:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 

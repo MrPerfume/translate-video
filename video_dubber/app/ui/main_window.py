@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -26,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.config.settings import DEFAULT_OUTPUT_DIR
-from app.core.task_runner import ProcessingOptions, VideoDubberWorker
+from app.core.task_runner import BatchOptions, BatchWorker, ProcessingOptions, VideoDubberWorker
 from app.ui.widgets import DropVideoLabel
 from app.utils.file_utils import SUPPORTED_VIDEO_EXTENSIONS
 
@@ -35,12 +37,13 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("英文视频转中文配音工具")
-        self.resize(1280, 900)
-        self.setMinimumSize(980, 680)
-        self.video_path: str = ""
+        self.resize(1280, 960)
+        self.setMinimumSize(980, 720)
+        self.video_paths: list[str] = []
         self.result_paths: dict[str, str] = {}
+        self.last_output_dir: str = ""
         self.thread: QThread | None = None
-        self.worker: VideoDubberWorker | None = None
+        self.worker: "VideoDubberWorker | BatchWorker | None" = None
 
         self._build_ui()
         self._connect_signals()
@@ -71,21 +74,35 @@ class MainWindow(QMainWindow):
         self.menuBar().addAction(save_log_action)
 
     def _build_video_group(self) -> QGroupBox:
-        group = QGroupBox("视频选择")
+        group = QGroupBox("视频队列（支持多文件批量处理）")
         layout = QVBoxLayout(group)
 
-        row = QHBoxLayout()
-        self.choose_video_button = QPushButton("选择视频")
-        self.video_path_edit = QLineEdit()
-        self._normalize_button(self.choose_video_button)
-        self._normalize_line_edit(self.video_path_edit)
-        self.video_path_edit.setReadOnly(True)
-        self.video_path_edit.setPlaceholderText("支持 mp4、mov、mkv、avi")
-        row.addWidget(self.choose_video_button)
-        row.addWidget(self.video_path_edit, stretch=1)
+        # 按钮行
+        btn_row = QHBoxLayout()
+        self.add_video_button = QPushButton("添加视频")
+        self.add_folder_button = QPushButton("添加文件夹")
+        self.remove_video_button = QPushButton("移除选中")
+        self.clear_queue_button = QPushButton("清空队列")
+        for btn in (self.add_video_button, self.add_folder_button,
+                    self.remove_video_button, self.clear_queue_button):
+            self._normalize_button(btn)
+            btn_row.addWidget(btn)
+        self.queue_count_label = QLabel("共 0 个视频")
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.queue_count_label)
 
-        self.drop_label = DropVideoLabel()
-        layout.addLayout(row)
+        # 文件列表
+        self.video_list = QListWidget()
+        self.video_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.video_list.setMinimumHeight(90)
+        self.video_list.setMaximumHeight(160)
+        self.video_list.setAcceptDrops(True)
+
+        # 拖拽区（兼容旧拖拽逻辑）
+        self.drop_label = DropVideoLabel("拖拽视频文件或文件夹到此处批量添加")
+
+        layout.addLayout(btn_row)
+        layout.addWidget(self.video_list)
         layout.addWidget(self.drop_label)
         return group
 
@@ -241,6 +258,15 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self.cancel_button)
         button_row.addStretch(1)
 
+        # 批量进度
+        self.batch_progress_bar = QProgressBar()
+        self.batch_progress_bar.setRange(0, 100)
+        self.batch_progress_bar.setMinimumHeight(18)
+        self.batch_progress_bar.setFormat("%v / %m 个视频")
+        self.batch_progress_bar.setTextVisible(True)
+        self.batch_label = QLabel("批量进度：-")
+
+        # 单视频进度
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setMinimumHeight(18)
@@ -255,7 +281,9 @@ class MainWindow(QMainWindow):
         self.status_label.setWordWrap(True)
 
         layout.addLayout(button_row)
-        layout.addWidget(QLabel("总进度"))
+        layout.addWidget(self.batch_label)
+        layout.addWidget(self.batch_progress_bar)
+        layout.addWidget(QLabel("当前视频进度"))
         layout.addWidget(self.progress_bar)
         layout.addWidget(QLabel("当前环节进度"))
         layout.addWidget(self.current_step_progress_bar)
@@ -290,7 +318,7 @@ class MainWindow(QMainWindow):
         group = QGroupBox("结果")
         layout = QHBoxLayout(group)
         self.open_output_button = QPushButton("打开输出文件夹")
-        self.play_video_button = QPushButton("播放生成视频")
+        self.play_video_button = QPushButton("播放最新视频")
         self.view_en_srt_button = QPushButton("查看英文字幕")
         self.view_zh_srt_button = QPushButton("查看中文字幕")
         self.view_bilingual_button = QPushButton("查看双语文本")
@@ -307,8 +335,11 @@ class MainWindow(QMainWindow):
         return group
 
     def _connect_signals(self) -> None:
-        self.choose_video_button.clicked.connect(self.choose_video)
-        self.drop_label.video_dropped.connect(self.set_video_path)
+        self.add_video_button.clicked.connect(self.add_videos)
+        self.add_folder_button.clicked.connect(self.add_folder)
+        self.remove_video_button.clicked.connect(self.remove_selected)
+        self.clear_queue_button.clicked.connect(self.clear_queue)
+        self.drop_label.video_dropped.connect(self.add_video_path)
         self.choose_whisper_model_file_button.clicked.connect(self.choose_whisper_model_file)
         self.choose_whisper_model_path_button.clicked.connect(self.choose_whisper_model_path)
         self.choose_output_button.clicked.connect(self.choose_output_dir)
@@ -318,30 +349,66 @@ class MainWindow(QMainWindow):
         self.cancel_button.clicked.connect(self.cancel_processing)
         self.copy_log_button.clicked.connect(self.copy_log)
         self.save_log_button.clicked.connect(self.save_log)
-        self.open_output_button.clicked.connect(lambda: self.open_path(self.result_paths.get("output_dir")))
+        self.open_output_button.clicked.connect(self._open_output_dir)
         self.play_video_button.clicked.connect(lambda: self.open_path(self.result_paths.get("dubbed_video")))
         self.view_en_srt_button.clicked.connect(lambda: self.open_path(self.result_paths.get("english_srt")))
         self.view_zh_srt_button.clicked.connect(lambda: self.open_path(self.result_paths.get("chinese_srt")))
         self.view_bilingual_button.clicked.connect(lambda: self.open_path(self.result_paths.get("bilingual_txt")))
 
-    def choose_video(self) -> None:
-        filters = "视频文件 (*.mp4 *.mov *.mkv *.avi)"
-        path, _ = QFileDialog.getOpenFileName(self, "选择英文视频", "", filters)
-        if path:
-            self.set_video_path(path)
+    # ------------------------------------------------------------------
+    # 视频队列管理
+    # ------------------------------------------------------------------
 
-    def set_video_path(self, path: str) -> None:
+    def add_videos(self) -> None:
+        filters = "视频文件 (*.mp4 *.mov *.mkv *.avi)"
+        paths, _ = QFileDialog.getOpenFileNames(self, "选择视频文件", "", filters)
+        for p in paths:
+            self.add_video_path(p)
+
+    def add_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "选择包含视频的文件夹", "")
+        if not folder:
+            return
+        added = 0
+        for p in sorted(Path(folder).iterdir()):
+            if p.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+                self.add_video_path(str(p))
+                added += 1
+        if added == 0:
+            QMessageBox.information(self, "未找到视频", f"文件夹中没有支持的视频文件（mp4/mov/mkv/avi）")
+
+    def add_video_path(self, path: str) -> None:
         suffix = Path(path).suffix.lower()
         if suffix not in SUPPORTED_VIDEO_EXTENSIONS:
-            QMessageBox.warning(self, "视频格式不支持", "仅支持 mp4、mov、mkv、avi 视频文件")
             return
-        self.video_path = path
-        self.video_path_edit.setText(path)
-        self.drop_label.setText(Path(path).name)
-        # 选择新视频时重置结果区，避免误操作打开上一次的文件
+        if path in self.video_paths:
+            return  # 去重
+        self.video_paths.append(path)
+        item = QListWidgetItem(Path(path).name)
+        item.setToolTip(path)
+        self.video_list.addItem(item)
+        self._update_queue_label()
+        # 添加新视频时重置结果区
         if self.result_paths:
             self.result_paths = {}
             self._set_result_buttons_enabled(False)
+
+    def remove_selected(self) -> None:
+        for item in self.video_list.selectedItems():
+            row = self.video_list.row(item)
+            self.video_list.takeItem(row)
+            if 0 <= row < len(self.video_paths):
+                self.video_paths.pop(row)
+        self._update_queue_label()
+
+    def clear_queue(self) -> None:
+        self.video_list.clear()
+        self.video_paths.clear()
+        self._update_queue_label()
+
+    def _update_queue_label(self) -> None:
+        n = len(self.video_paths)
+        self.queue_count_label.setText(f"共 {n} 个视频")
 
     def choose_output_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择输出目录", self.output_dir_edit.text())
@@ -402,24 +469,9 @@ class MainWindow(QMainWindow):
             self.tts_preview_button.setEnabled(True)
             self.tts_preview_button.setText("试听")
 
-    def start_processing(self) -> None:
-        if self.thread is not None:
-            QMessageBox.information(self, "任务运行中", "当前已有任务正在运行")
-            return
-        if not self.video_path:
-            QMessageBox.warning(self, "缺少视频", "请先选择或拖拽一个视频文件")
-            return
-
-        self.log_text.clear()
-        self.result_paths = {}
-        self._set_result_buttons_enabled(False)
-        self.progress_bar.setValue(0)
-        self._set_current_step_progress(0)
-        self.step_label.setText("当前步骤：准备开始")
-        self.step_detail_label.setText("当前环节：等待 Worker 启动")
-
-        options = ProcessingOptions(
-            video_path=self.video_path,
+    def _build_batch_options(self) -> BatchOptions:
+        return BatchOptions(
+            video_paths=tuple(self.video_paths),
             output_dir=self.output_dir_edit.text().strip(),
             whisper_model=self.whisper_model_combo.currentText(),
             whisper_model_path=self.whisper_model_path_edit.text().strip(),
@@ -434,8 +486,31 @@ class MainWindow(QMainWindow):
             cleanup_intermediate_files=self.cleanup_checkbox.isChecked(),
         )
 
+    def start_processing(self) -> None:
+        if self.thread is not None:
+            QMessageBox.information(self, "任务运行中", "当前已有任务正在运行")
+            return
+        if not self.video_paths:
+            QMessageBox.warning(self, "队列为空", "请先添加至少一个视频文件")
+            return
+
+        total = len(self.video_paths)
+        self.log_text.clear()
+        self.result_paths = {}
+        self._set_result_buttons_enabled(False)
+        self.progress_bar.setValue(0)
+        self._set_current_step_progress(0)
+        self.batch_progress_bar.setRange(0, total)
+        self.batch_progress_bar.setValue(0)
+        self.batch_label.setText(f"批量进度：0 / {total}")
+        self.step_label.setText("当前步骤：准备开始")
+        self.step_detail_label.setText("当前环节：等待 Worker 启动")
+
+        batch_options = self._build_batch_options()
+        self.last_output_dir = batch_options.output_dir
+
         self.thread = QThread(self)
-        self.worker = VideoDubberWorker(options)
+        self.worker = BatchWorker(batch_options)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.log_message.connect(self.append_log)
@@ -444,11 +519,12 @@ class MainWindow(QMainWindow):
         self.worker.step_changed.connect(lambda text: self.step_label.setText(f"当前步骤：{text}"))
         self.worker.step_detail_changed.connect(lambda text: self.step_detail_label.setText(f"当前环节：{text}"))
         self.worker.status_changed.connect(lambda text: self.status_label.setText(f"状态：{text}"))
-        self.worker.finished.connect(self.on_finished)
-        self.worker.failed.connect(self.on_failed)
+        self.worker.batch_progress_changed.connect(self._on_batch_progress)
+        self.worker.item_finished.connect(self._on_item_finished)
+        self.worker.item_failed.connect(self._on_item_failed)
+        self.worker.finished.connect(self.on_batch_finished)
         self.worker.canceled.connect(self.on_canceled)
-        self.worker.finished.connect(lambda _result: self._cleanup_thread())
-        self.worker.failed.connect(lambda _message: self._cleanup_thread())
+        self.worker.finished.connect(lambda _: self._cleanup_thread())
         self.worker.canceled.connect(self._cleanup_thread)
         self.thread.start()
         self._set_running(True)
@@ -473,15 +549,50 @@ class MainWindow(QMainWindow):
         self.log_text.appendPlainText(line)
         self.log_text.verticalScrollBar().setValue(self.log_text.verticalScrollBar().maximum())
 
-    def on_finished(self, result: dict) -> None:
-        self.result_paths = result
-        self._set_result_buttons_enabled(True)
-        self.statusBar().showMessage("处理完成")
-        QMessageBox.information(self, "处理完成", "中文配音视频和相关文件已生成")
+    # ------------------------------------------------------------------
+    # 批量回调
+    # ------------------------------------------------------------------
 
-    def on_failed(self, message: str) -> None:
-        self.statusBar().showMessage("处理失败")
-        QMessageBox.critical(self, "处理失败", message)
+    def _on_batch_progress(self, done: int, total: int) -> None:
+        self.batch_progress_bar.setRange(0, total)
+        self.batch_progress_bar.setValue(done)
+        self.batch_label.setText(f"批量进度：{done} / {total}")
+        # 高亮列表中当前处理项
+        for i in range(self.video_list.count()):
+            item = self.video_list.item(i)
+            if i < done:
+                item.setText(f"✓ {Path(self.video_paths[i]).name}")
+            elif i == done:
+                item.setText(f"▶ {Path(self.video_paths[i]).name}")
+            else:
+                item.setText(Path(self.video_paths[i]).name)
+
+    def _on_item_finished(self, index: int, result: dict) -> None:
+        self.result_paths = result
+        self.last_output_dir = result.get("output_dir", self.last_output_dir)
+        if index < self.video_list.count():
+            self.video_list.item(index).setText(f"✓ {Path(self.video_paths[index]).name}")
+
+    def _on_item_failed(self, index: int, video_path: str, error: str) -> None:
+        if index < self.video_list.count():
+            self.video_list.item(index).setText(f"✗ {Path(video_path).name}")
+
+    def on_batch_finished(self, results: list) -> None:
+        total = len(results)
+        succeeded = sum(1 for r in results if r.get("success", False))
+        failed = total - succeeded
+        self._set_result_buttons_enabled(bool(self.result_paths))
+        self.statusBar().showMessage(f"批量处理完成：{succeeded} 成功，{failed} 失败")
+        if failed == 0:
+            QMessageBox.information(self, "批量处理完成",
+                f"全部 {total} 个视频处理完成，输出目录：\n{self.last_output_dir}")
+        else:
+            failed_names = "\n".join(
+                f"  \u2717 {Path(r['video_path']).name}\uff1a{r['error']}"
+                for r in results if not r.get("success", False)
+            )
+            QMessageBox.warning(self, "批量处理完成（有失败）",
+                f"{succeeded}/{total} 个视频成功，{failed} 个失败：\n{failed_names}")
 
     def on_canceled(self) -> None:
         self.append_log("任务已取消")
@@ -502,7 +613,10 @@ class MainWindow(QMainWindow):
     def _set_running(self, running: bool) -> None:
         self.start_button.setEnabled(not running)
         self.cancel_button.setEnabled(running)
-        self.choose_video_button.setEnabled(not running)
+        self.add_video_button.setEnabled(not running)
+        self.add_folder_button.setEnabled(not running)
+        self.remove_video_button.setEnabled(not running)
+        self.clear_queue_button.setEnabled(not running)
         self.choose_whisper_model_file_button.setEnabled(not running)
         self.choose_whisper_model_path_button.setEnabled(not running)
         self.choose_output_button.setEnabled(not running)
@@ -516,6 +630,10 @@ class MainWindow(QMainWindow):
             self.view_bilingual_button,
         ):
             button.setEnabled(enabled)
+
+    def _open_output_dir(self) -> None:
+        target = self.last_output_dir or self.result_paths.get("output_dir")
+        self.open_path(target)
 
     def copy_log(self) -> None:
         QApplication.clipboard().setText(self.log_text.toPlainText())
