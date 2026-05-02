@@ -1,0 +1,9 @@
+PySide6
+faster-whisper
+openai-whisper
+python-dotenv
+httpx
+edge-tts
+pydub
+soundfile
+pyinstaller

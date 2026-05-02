@@ -1,0 +1,45 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+video_dubber/.venv/
+
+# Secrets and local runtime configuration
+.env
+video_dubber/.env
+
+# Generated outputs and temporary media
+output/
+video_dubber/output/
+*.wav
+*.mp3
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.srt
+*.log
+
+# Local model files are large and should be downloaded separately.
+models/
+*.pt
+*.bin
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Local Git history backups
+.git.backup*/
