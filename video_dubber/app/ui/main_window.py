@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QProgressBar,
     QPlainTextEdit,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -35,7 +36,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("英文视频转中文配音工具")
         self.resize(1280, 900)
-        self.setMinimumSize(980, 760)
+        self.setMinimumSize(980, 680)
         self.video_path: str = ""
         self.result_paths: dict[str, str] = {}
         self.thread: QThread | None = None
@@ -47,17 +48,21 @@ class MainWindow(QMainWindow):
         self._set_result_buttons_enabled(False)
 
     def _build_ui(self) -> None:
-        central = QWidget()
-        main_layout = QVBoxLayout(central)
+        content = QWidget()
+        main_layout = QVBoxLayout(content)
         main_layout.setSpacing(10)
+        main_layout.setContentsMargins(10, 10, 10, 10)
 
         main_layout.addWidget(self._build_video_group())
         main_layout.addWidget(self._build_settings_group())
         main_layout.addWidget(self._build_execution_group())
-        main_layout.addWidget(self._build_log_group(), stretch=1)
+        main_layout.addWidget(self._build_log_group())
         main_layout.addWidget(self._build_result_group())
 
-        self.setCentralWidget(central)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(content)
+        self.setCentralWidget(scroll_area)
         self.statusBar().showMessage("就绪")
 
         save_log_action = QAction("保存日志", self)
@@ -71,6 +76,8 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         self.choose_video_button = QPushButton("选择视频")
         self.video_path_edit = QLineEdit()
+        self._normalize_button(self.choose_video_button)
+        self._normalize_line_edit(self.video_path_edit)
         self.video_path_edit.setReadOnly(True)
         self.video_path_edit.setPlaceholderText("支持 mp4、mov、mkv、avi")
         row.addWidget(self.choose_video_button)
@@ -90,39 +97,50 @@ class MainWindow(QMainWindow):
         self.whisper_model_combo.addItems(["tiny", "base", "small", "medium", "large-v3"])
         self.whisper_model_combo.setCurrentText("small")
         self.whisper_model_combo.setMinimumWidth(180)
+        self._normalize_combo(self.whisper_model_combo)
         self.whisper_model_path_edit = QLineEdit()
         self.whisper_model_path_edit.setPlaceholderText("可选：选择本地 faster-whisper 模型文件夹，或 OpenAI Whisper .pt 模型文件")
         self.whisper_model_path_edit.setMinimumWidth(620)
+        self._normalize_line_edit(self.whisper_model_path_edit)
         self.choose_whisper_model_path_button = QPushButton("选择本地模型")
+        self._normalize_button(self.choose_whisper_model_path_button)
 
         self.source_language_combo = QComboBox()
         self.source_language_combo.addItems(["English"])
         self.source_language_combo.setMinimumWidth(180)
+        self._normalize_combo(self.source_language_combo)
         self.target_language_combo = QComboBox()
         self.target_language_combo.addItems(["Chinese Simplified"])
         self.target_language_combo.setMinimumWidth(220)
+        self._normalize_combo(self.target_language_combo)
 
         self.translation_service_combo = QComboBox()
         self.translation_service_combo.addItems(["DeepSeek", "OpenAI"])
         self.translation_service_combo.setCurrentText("DeepSeek")
         self.translation_service_combo.setMinimumWidth(180)
+        self._normalize_combo(self.translation_service_combo)
 
         self.translation_model_edit = QLineEdit("deepseek-v4-flash")
         self.translation_model_edit.setMinimumWidth(260)
+        self._normalize_line_edit(self.translation_model_edit)
         self.tts_service_combo = QComboBox()
         self.tts_service_combo.addItems(["Edge TTS", "OpenAI TTS", "ElevenLabs"])
         self.tts_service_combo.setCurrentText("Edge TTS")
         self.tts_service_combo.setMinimumWidth(180)
+        self._normalize_combo(self.tts_service_combo)
 
         self.tts_voice_edit = QLineEdit("zh-CN-XiaoxiaoNeural")
         self.tts_voice_edit.setMinimumWidth(360)
+        self._normalize_line_edit(self.tts_voice_edit)
         self.keep_background_checkbox = QCheckBox("保留原视频背景音")
         self.bilingual_checkbox = QCheckBox("生成双语字幕")
         self.bilingual_checkbox.setChecked(True)
 
         self.output_dir_edit = QLineEdit(str(DEFAULT_OUTPUT_DIR))
         self.output_dir_edit.setMinimumWidth(620)
+        self._normalize_line_edit(self.output_dir_edit)
         self.choose_output_button = QPushButton("选择输出目录")
+        self._normalize_button(self.choose_output_button)
 
         whisper_form = self._make_form()
         whisper_form.addRow("Whisper 模型", self.whisper_model_combo)
@@ -131,6 +149,7 @@ class MainWindow(QMainWindow):
         model_path_row.addWidget(self.whisper_model_path_edit, stretch=1)
         self.choose_whisper_model_file_button = QPushButton("选择模型文件")
         self.choose_whisper_model_path_button.setText("选择模型文件夹")
+        self._normalize_button(self.choose_whisper_model_file_button)
         self.choose_whisper_model_file_button.setFixedWidth(120)
         self.choose_whisper_model_path_button.setFixedWidth(132)
         model_path_row.addWidget(self.choose_whisper_model_file_button)
@@ -195,6 +214,21 @@ class MainWindow(QMainWindow):
         form.setVerticalSpacing(10)
         return form
 
+    @staticmethod
+    def _normalize_line_edit(widget: QLineEdit) -> None:
+        widget.setMinimumHeight(30)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    @staticmethod
+    def _normalize_combo(widget: QComboBox) -> None:
+        widget.setMinimumHeight(30)
+        widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+    @staticmethod
+    def _normalize_button(widget: QPushButton) -> None:
+        widget.setMinimumHeight(30)
+        widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
     def _build_execution_group(self) -> QGroupBox:
         group = QGroupBox("执行")
         layout = QVBoxLayout(group)
@@ -202,15 +236,19 @@ class MainWindow(QMainWindow):
         button_row = QHBoxLayout()
         self.start_button = QPushButton("开始处理")
         self.cancel_button = QPushButton("取消任务")
+        self._normalize_button(self.start_button)
+        self._normalize_button(self.cancel_button)
         button_row.addWidget(self.start_button)
         button_row.addWidget(self.cancel_button)
         button_row.addStretch(1)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
+        self.progress_bar.setMinimumHeight(18)
         self.current_step_progress_bar = QProgressBar()
         self.current_step_progress_bar.setRange(0, 100)
         self.current_step_progress_bar.setValue(0)
+        self.current_step_progress_bar.setMinimumHeight(18)
         self.step_label = QLabel("当前步骤：未开始")
         self.step_detail_label = QLabel("当前环节：等待开始")
         self.step_detail_label.setWordWrap(True)
@@ -239,6 +277,8 @@ class MainWindow(QMainWindow):
         button_row = QHBoxLayout()
         self.copy_log_button = QPushButton("复制日志")
         self.save_log_button = QPushButton("保存日志")
+        self._normalize_button(self.copy_log_button)
+        self._normalize_button(self.save_log_button)
         button_row.addWidget(self.copy_log_button)
         button_row.addWidget(self.save_log_button)
         button_row.addStretch(1)
@@ -262,6 +302,7 @@ class MainWindow(QMainWindow):
             self.view_zh_srt_button,
             self.view_bilingual_button,
         ):
+            self._normalize_button(button)
             layout.addWidget(button)
         layout.addStretch(1)
         return group
