@@ -80,7 +80,8 @@ class VideoDubberWorker(QObject):
     @Slot()
     def cancel(self) -> None:
         self._cancel_requested = True
-        self.status_changed.emit("正在取消任务，当前步骤结束后停止...")
+        self.status_changed.emit("正在取消任务，正在停止当前处理...")
+        self.logger.warning("收到取消请求，正在停止当前处理")
 
     def _check_cancel(self) -> None:
         if self._cancel_requested:
@@ -143,7 +144,7 @@ class VideoDubberWorker(QObject):
             model_name=options.whisper_model,
             language="en",
             model_path=options.whisper_model_path.strip() or None,
-        ).transcribe(extracted_wav)
+        ).transcribe(extracted_wav, should_cancel=lambda: self._cancel_requested)
         self.logger.info(f"识别完成：共 {len(segments)} 段字幕")
 
         self._set_step("步骤 4/7：翻译中文字幕", 45)

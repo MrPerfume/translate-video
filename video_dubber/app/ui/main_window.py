@@ -359,6 +359,9 @@ class MainWindow(QMainWindow):
 
     def cancel_processing(self) -> None:
         if self.worker is not None:
+            self.cancel_button.setEnabled(False)
+            self.status_label.setText("状态：正在取消任务...")
+            self.statusBar().showMessage("正在取消任务...")
             self.worker.cancel()
 
     def append_log(self, line: str) -> None:

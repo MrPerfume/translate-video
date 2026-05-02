@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import multiprocessing as mp
+import queue
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 @dataclass
@@ -18,12 +21,57 @@ class WhisperTranscriber:
         self.language = language
         self.model_path = model_path
 
-    def transcribe(self, audio_path: Path) -> list[SubtitleSegment]:
+    def transcribe(
+        self,
+        audio_path: Path,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> list[SubtitleSegment]:
+        if should_cancel is None:
+            return self._transcribe_direct(audio_path)
+        return self._transcribe_in_subprocess(audio_path, should_cancel)
+
+    def _transcribe_direct(self, audio_path: Path) -> list[SubtitleSegment]:
         model_ref = self._resolve_model_ref()
         if self._is_openai_whisper_checkpoint(model_ref):
             return self._transcribe_openai_whisper(audio_path, model_ref)
 
         return self._transcribe_faster_whisper(audio_path, model_ref)
+
+    def _transcribe_in_subprocess(
+        self,
+        audio_path: Path,
+        should_cancel: Callable[[], bool],
+    ) -> list[SubtitleSegment]:
+        ctx = mp.get_context("spawn")
+        result_queue = ctx.Queue(maxsize=1)
+        process = ctx.Process(
+            target=_transcribe_process_entry,
+            args=(str(audio_path), self.model_name, self.language, self.model_path, result_queue),
+        )
+        process.daemon = True
+        process.start()
+
+        while True:
+            if should_cancel():
+                process.terminate()
+                process.join(timeout=5)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=2)
+                raise RuntimeError("任务已取消")
+
+            try:
+                status, payload = result_queue.get(timeout=0.5)
+            except queue.Empty:
+                if not process.is_alive():
+                    process.join()
+                    raise RuntimeError(f"Whisper 识别进程异常退出，退出码：{process.exitcode}")
+                continue
+
+            process.join(timeout=2)
+            if status == "ok":
+                return [SubtitleSegment(**item) for item in payload]
+            raise RuntimeError(str(payload))
 
     def _transcribe_faster_whisper(self, audio_path: Path, model_ref: str) -> list[SubtitleSegment]:
         try:
@@ -108,3 +156,21 @@ class WhisperTranscriber:
             return None
         candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
         return candidates[0]
+
+
+def _transcribe_process_entry(
+    audio_path: str,
+    model_name: str,
+    language: str,
+    model_path: str | None,
+    result_queue,
+) -> None:
+    try:
+        segments = WhisperTranscriber(
+            model_name=model_name,
+            language=language,
+            model_path=model_path,
+        )._transcribe_direct(Path(audio_path))
+        result_queue.put(("ok", [segment.__dict__ for segment in segments]))
+    except BaseException as exc:
+        result_queue.put(("error", str(exc) or exc.__class__.__name__))
