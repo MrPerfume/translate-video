@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_area.setWidget(content)
         self.setCentralWidget(scroll_area)
         self.statusBar().showMessage("就绪")
@@ -90,9 +91,8 @@ class MainWindow(QMainWindow):
 
     def _build_settings_group(self) -> QGroupBox:
         group = QGroupBox("参数设置")
-        layout = QGridLayout(group)
-        layout.setHorizontalSpacing(12)
-        layout.setVerticalSpacing(9)
+        layout = QVBoxLayout(group)
+        layout.setSpacing(8)
         layout.setContentsMargins(12, 14, 12, 12)
 
         self.whisper_model_combo = QComboBox()
@@ -150,35 +150,46 @@ class MainWindow(QMainWindow):
 
         self.choose_output_button.setFixedWidth(132)
 
-        layout.addWidget(self._field_label("Whisper 模型"), 0, 0)
-        layout.addWidget(self.whisper_model_combo, 0, 1)
-        layout.addWidget(self._field_label("本地模型路径"), 0, 2)
-        layout.addWidget(self.whisper_model_path_edit, 0, 3, 1, 6)
-        layout.addWidget(self.choose_whisper_model_file_button, 0, 9)
-        layout.addWidget(self.choose_whisper_model_path_button, 0, 10)
+        short_grid = QGridLayout()
+        short_grid.setHorizontalSpacing(12)
+        short_grid.setVerticalSpacing(8)
+        short_grid.addWidget(self._field_label("Whisper 模型"), 0, 0)
+        short_grid.addWidget(self.whisper_model_combo, 0, 1)
+        short_grid.addWidget(self._field_label("源语言"), 0, 2)
+        short_grid.addWidget(self.source_language_combo, 0, 3)
+        short_grid.addWidget(self._field_label("目标语言"), 0, 4)
+        short_grid.addWidget(self.target_language_combo, 0, 5)
 
-        layout.addWidget(self._field_label("源语言"), 1, 0)
-        layout.addWidget(self.source_language_combo, 1, 1)
-        layout.addWidget(self._field_label("目标语言"), 1, 2)
-        layout.addWidget(self.target_language_combo, 1, 3)
-        layout.addWidget(self._field_label("翻译服务"), 1, 4)
-        layout.addWidget(self.translation_service_combo, 1, 5)
-        layout.addWidget(self._field_label("翻译模型"), 1, 6)
-        layout.addWidget(self.translation_model_edit, 1, 7, 1, 2)
+        short_grid.addWidget(self._field_label("翻译服务"), 1, 0)
+        short_grid.addWidget(self.translation_service_combo, 1, 1)
+        short_grid.addWidget(self._field_label("翻译模型"), 1, 2)
+        short_grid.addWidget(self.translation_model_edit, 1, 3, 1, 2)
 
-        layout.addWidget(self._field_label("TTS 服务"), 2, 0)
-        layout.addWidget(self.tts_service_combo, 2, 1)
-        layout.addWidget(self._field_label("中文声音"), 2, 2)
-        layout.addWidget(self.tts_voice_edit, 2, 3)
-        layout.addWidget(self._field_label("选项"), 2, 4)
-        layout.addWidget(self.keep_background_checkbox, 2, 5, 1, 2)
-        layout.addWidget(self.bilingual_checkbox, 2, 7, 1, 2)
+        short_grid.addWidget(self._field_label("TTS 服务"), 2, 0)
+        short_grid.addWidget(self.tts_service_combo, 2, 1)
+        short_grid.addWidget(self._field_label("中文声音"), 2, 2)
+        short_grid.addWidget(self.tts_voice_edit, 2, 3, 1, 2)
+        short_grid.addWidget(self._field_label("选项"), 2, 5)
+        short_grid.addWidget(self.keep_background_checkbox, 2, 6)
+        short_grid.addWidget(self.bilingual_checkbox, 2, 7)
+        short_grid.setColumnStretch(8, 1)
 
-        layout.addWidget(self._field_label("输出目录"), 3, 0)
-        layout.addWidget(self.output_dir_edit, 3, 1, 1, 9)
-        layout.addWidget(self.choose_output_button, 3, 10)
-        layout.setColumnStretch(3, 1)
-        layout.setColumnStretch(8, 1)
+        model_path_row = QHBoxLayout()
+        model_path_row.setSpacing(8)
+        model_path_row.addWidget(self._row_label("本地模型路径"))
+        model_path_row.addWidget(self.whisper_model_path_edit, stretch=1)
+        model_path_row.addWidget(self.choose_whisper_model_file_button)
+        model_path_row.addWidget(self.choose_whisper_model_path_button)
+
+        output_row = QHBoxLayout()
+        output_row.setSpacing(8)
+        output_row.addWidget(self._row_label("输出目录"))
+        output_row.addWidget(self.output_dir_edit, stretch=1)
+        output_row.addWidget(self.choose_output_button)
+
+        layout.addLayout(short_grid)
+        layout.addLayout(model_path_row)
+        layout.addLayout(output_row)
         return group
 
     @staticmethod
@@ -186,6 +197,12 @@ class MainWindow(QMainWindow):
         label = QLabel(text)
         label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         label.setMinimumHeight(30)
+        return label
+
+    @staticmethod
+    def _row_label(text: str) -> QLabel:
+        label = MainWindow._field_label(text)
+        label.setFixedWidth(92)
         return label
 
     @staticmethod
