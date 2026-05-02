@@ -12,6 +12,7 @@ from app.utils.ffmpeg_utils import get_media_duration
 
 
 LogCallback = Callable[[str], None]
+ProgressCallback = Callable[[int, int], None]
 
 
 class BaseTTSEngine:
@@ -21,6 +22,7 @@ class BaseTTSEngine:
         output_wav: Path,
         total_duration_seconds: float,
         on_log: LogCallback | None = None,
+        on_progress: ProgressCallback | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> Path:
         raise NotImplementedError
@@ -36,6 +38,7 @@ class EdgeTTSEngine(BaseTTSEngine):
         output_wav: Path,
         total_duration_seconds: float,
         on_log: LogCallback | None = None,
+        on_progress: ProgressCallback | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> Path:
         try:
@@ -64,6 +67,8 @@ class EdgeTTSEngine(BaseTTSEngine):
                     over = (len(audio) - original_duration_ms) / 1000
                     on_log(f"第 {index} 段 TTS 超出原字幕时长 {over:.2f}s，已保留完整语音")
                 track = track.overlay(audio, position=max(0, int(segment.start * 1000)))
+                if on_progress:
+                    on_progress(index, len(segments))
 
         output_wav.parent.mkdir(parents=True, exist_ok=True)
         track.export(output_wav, format="wav")
@@ -84,6 +89,7 @@ class PlaceholderTTSEngine(BaseTTSEngine):
         output_wav: Path,
         total_duration_seconds: float,
         on_log: LogCallback | None = None,
+        on_progress: ProgressCallback | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> Path:
         raise RuntimeError(f"{self.service_name} TTS 预留接口暂未实现，请先选择 Edge TTS")
@@ -105,4 +111,3 @@ def media_duration_or_fallback(video_path: Path, segments: list[SubtitleSegment]
     if duration <= 0 and segments:
         duration = max(segment.end for segment in segments) + 2
     return duration
-

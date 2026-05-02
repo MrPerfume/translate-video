@@ -208,13 +208,22 @@ class MainWindow(QMainWindow):
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
+        self.current_step_progress_bar = QProgressBar()
+        self.current_step_progress_bar.setRange(0, 100)
+        self.current_step_progress_bar.setValue(0)
         self.step_label = QLabel("当前步骤：未开始")
+        self.step_detail_label = QLabel("当前环节：等待开始")
+        self.step_detail_label.setWordWrap(True)
         self.status_label = QLabel("状态：就绪")
         self.status_label.setWordWrap(True)
 
         layout.addLayout(button_row)
+        layout.addWidget(QLabel("总进度"))
         layout.addWidget(self.progress_bar)
+        layout.addWidget(QLabel("当前环节进度"))
+        layout.addWidget(self.current_step_progress_bar)
         layout.addWidget(self.step_label)
+        layout.addWidget(self.step_detail_label)
         layout.addWidget(self.status_label)
         return group
 
@@ -324,6 +333,9 @@ class MainWindow(QMainWindow):
         self.result_paths = {}
         self._set_result_buttons_enabled(False)
         self.progress_bar.setValue(0)
+        self._set_current_step_progress(0)
+        self.step_label.setText("当前步骤：准备开始")
+        self.step_detail_label.setText("当前环节：等待 Worker 启动")
 
         options = ProcessingOptions(
             video_path=self.video_path,
@@ -346,7 +358,9 @@ class MainWindow(QMainWindow):
         self.thread.started.connect(self.worker.run)
         self.worker.log_message.connect(self.append_log)
         self.worker.progress_changed.connect(self.progress_bar.setValue)
+        self.worker.step_progress_changed.connect(self._set_current_step_progress)
         self.worker.step_changed.connect(lambda text: self.step_label.setText(f"当前步骤：{text}"))
+        self.worker.step_detail_changed.connect(lambda text: self.step_detail_label.setText(f"当前环节：{text}"))
         self.worker.status_changed.connect(lambda text: self.status_label.setText(f"状态：{text}"))
         self.worker.finished.connect(self.on_finished)
         self.worker.failed.connect(self.on_failed)
@@ -361,8 +375,17 @@ class MainWindow(QMainWindow):
         if self.worker is not None:
             self.cancel_button.setEnabled(False)
             self.status_label.setText("状态：正在取消任务...")
+            self.step_detail_label.setText("当前环节：正在取消当前处理...")
             self.statusBar().showMessage("正在取消任务...")
             self.worker.cancel()
+
+    def _set_current_step_progress(self, value: int) -> None:
+        if value < 0:
+            self.current_step_progress_bar.setRange(0, 0)
+            return
+        if self.current_step_progress_bar.minimum() != 0 or self.current_step_progress_bar.maximum() != 100:
+            self.current_step_progress_bar.setRange(0, 100)
+        self.current_step_progress_bar.setValue(value)
 
     def append_log(self, line: str) -> None:
         self.log_text.appendPlainText(line)

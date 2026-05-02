@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import Callable
 
 import httpx
 
@@ -44,9 +45,18 @@ class SubtitleTranslator:
         if service not in {"openai", "deepseek"}:
             raise RuntimeError(f"不支持的翻译服务：{self.config.service}")
 
-    def translate_segments(self, segments: list[SubtitleSegment]) -> list[SubtitleSegment]:
+    def translate_segments(
+        self,
+        segments: list[SubtitleSegment],
+        on_progress: Callable[[int, int], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> list[SubtitleSegment]:
         self.validate_credentials()
+        total_batches = max(1, (len(segments) + self.config.batch_size - 1) // self.config.batch_size)
+        completed_batches = 0
         for start in range(0, len(segments), self.config.batch_size):
+            if should_cancel and should_cancel():
+                raise RuntimeError("任务已取消")
             batch = segments[start : start + self.config.batch_size]
             translations = self._translate_batch(batch, start)
             if len(translations) != len(batch):
@@ -57,6 +67,9 @@ class SubtitleTranslator:
                 segment.chinese_text = str(translated).strip()
                 if not segment.chinese_text:
                     raise RuntimeError("翻译结果包含空字幕")
+            completed_batches += 1
+            if on_progress:
+                on_progress(completed_batches, total_batches)
         return segments
 
     def _translate_batch(self, batch: list[SubtitleSegment], offset: int) -> list[str]:
